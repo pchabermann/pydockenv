@@ -1,17 +1,18 @@
 dist: xenial
 language: python
 python:
+  - "3.6"
   - "3.7"
+  - "3.8"
 
 services:
   - docker
 
 before_install:
-  - sudo apt-get update
-  - sudo apt-get install bash
-  - sudo chsh -s /bin/bash
-  - pip install $(grep tox requirements-dev.txt)
-  - sed -i 's/#!\/usr\/bin\/env sh/#!\/bin\/bash/' bin/pydockenv
+  - pip install .
+  # For some reason if this is not done before, the image won't be pulled.
+  # This is not required when running locally.
+  - docker pull alpine/socat:latest
 
 script:
-  - tox
+  - python -m unittest discover

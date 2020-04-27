@@ -16,8 +16,19 @@ To install `pydockenv` run the following:
 pip install --user pydockenv
 ```
 
-To avoid conflicts this installs `pydockenv` to the Python user install directory. In order to run the `pydockenv` binary, you will need to have that directory in your `PATH`.
+To avoid conflicts this installs `pydockenv` to the Python user install directory. In order to run the `pydockenv` binary, you will need to have that directory in your `PATH`. You can do this by running these lines:
+```
+export PY_USER_BIN=$(python -c 'import site; print(site.USER_BASE + "/bin")')
+export PATH=$PY_USER_BIN:$PATH
+```
 
+`pydockenv` supports only python >=3.6 at the moment and will use the `python` binary. In case your system has another version installed, you can use a different interpreter by specifying its path through the `PYDOCKENV_INTERPRETER` environment variable:
+```
+PYDOCKENV_INTERPRETER=path/to/binary pydockenv [...]
+# or
+export PYDOCKENV_INTERPRETER=path/to/binary
+pydockenv [...]
+```
 
 ## Why?
 
@@ -37,20 +48,49 @@ Let's start by creating an environment!
 
 To create an environment run the following command:
 ```
-pydockenv create <env name> <project directory>
+pydockenv create --name=<env name> <project directory>
 ```
 
 For example, if you are in the root of a project named `awesome-project` this could be:
 ```
-pydockenv create awesome-project .
+pydockenv create --name=awesome-project .
 ```
 
 This will create a Docker container with the latest Python version installed! If you want to create an environment with a specific Python version you only just need to add the `--version=<python version>` to the previous command:
 ```
-pydockenv create awesome-project . --version=3.6
+pydockenv create --name=awesome-project --version=3.6 .
 ```
 
 As you may have noticed, to create the environment you have to set a project directory. This means that everything that is not inside the project directory is completely invisible to the environment. For example, you cannot access a Python script that resides outside your project directory. See the details in the [Advanced](#advanced) section.
+
+#### Creating an environment from a `*.toml` file
+
+Alternatively, you can use a `*.toml` file describing your environment. This is analogous to having a `requirements.txt` file. This file describes both the dependencies and the python version to use, for example:
+```
+[tool.pydockenv]
+name = "awesome-project"
+python = "3.7.4"
+
+[tool.pydockenv.dependencies]
+requests = ">=2.22.0"
+```
+
+*All the version specifiers described in [PEP 440](https://www.python.org/dev/peps/pep-0440/#version-specifiers) are supported.*
+
+Let's say that this is the content of a `pydockenv.toml` file in the current working directory. You can then create the environment as follows:
+```
+pydockenv create --file=pydockenv.toml <project directory>
+```
+
+You can eventually create it with a different name still using the `--name` flag:
+```
+pydockenv create --file=pydockenv.toml --name=another-awesome-project <project directory>
+```
+
+The `*.toml` file can be automatically created from an already existing environment by running:
+```
+pydockenv export --output=pydockenv.toml
+```
 
 ### Activation and packages installation
 
@@ -165,6 +205,7 @@ mkdir -p <prefix>/lib/python3.7/site-packages
 pip install --prefix <prefix> -e .
 ```
 I personally use `~/.local-dev` as `<prefix>`.
+
 4. Rename `pydockvenv` into `dev-pydockenv` or whatever you want:
 ```
 mv <prefix>/bin/{,dev-}pydockenv

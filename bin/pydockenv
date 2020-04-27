@@ -1,24 +1,32 @@
 #!/usr/bin/env sh
 
-if [ -n "$ZSH_VERSION" ] || [ -n "$BASH_VERSION" ] || [ -n "$KSH_VERSION" ]; then
-    ([[ -n $ZSH_EVAL_CONTEXT && $ZSH_EVAL_CONTEXT =~ :file$ ]] ||
-     [[ -n $KSH_VERSION && $(cd "$(dirname -- "$0")" &&
-                                 printf '%s' "${PWD%/}/")$(basename -- "$0") != "${.sh.file}" ]] ||
-     [[ -n $BASH_VERSION ]] && (return 0 2>/dev/null)) && sourced=1 || sourced=0
-else
-    echo "Unsupported shell"
-    exit 1
-fi
-
 cmd="$1"
-if [ $sourced -eq 0 ] && ([ "$cmd" = "activate" ] || [ "$cmd" = "deactivate" ])
-then
-    echo "$cmd command must be called using 'source'"
-    exit 1
+
+sourced=0
+if [ -n "$ZSH_EVAL_CONTEXT" ]; then
+    case $ZSH_EVAL_CONTEXT in *:file) sourced=1;; esac
+elif [ -n "$KSH_VERSION" ]; then
+    [ "$(cd $(dirname -- $0) && pwd -P)/$(basename -- $0)" != "$(cd $(dirname -- ${.sh.file}) && pwd -P)/$(basename -- ${.sh.file})" ] && sourced=1
+elif [ -n "$BASH_VERSION" ]; then
+    (return 0 2>/dev/null) && sourced=1
 fi
 
-pydockenv_entry_point=$(python -c 'from pydockenv.commands import pydockenv; print(pydockenv.__file__)')
-python $pydockenv_entry_point $@
+if [ "$cmd" = activate ] || [ "$cmd" = deactivate ]; then
+    if [ "$sourced" -eq 0 ]; then
+        echo "$cmd command must be called using 'source' with a supported shell"
+        exit 1
+    fi
+else
+    if [ "$sourced" -eq 1 ]; then
+        echo "source this script only with activate/deactivate commands"
+        return 1
+    fi
+fi
+
+python=${PYDOCKENV_INTERPRETER:-python}
+
+pydockenv_entry_point=$($python -c 'from pydockenv import cli; print(cli.__file__)')
+$python $pydockenv_entry_point $@
 
 exitCode=$?
 if [ $exitCode -eq 0 ]
@@ -39,4 +47,6 @@ then
     env 1>&2
 fi
 
-exit $exitCode
+if ! [ $sourced -eq 1 ]; then
+    exit $exitCode
+fi

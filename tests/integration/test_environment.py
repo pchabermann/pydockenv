@@ -1,86 +1,35 @@
-import os
-import shutil
-import unittest
 from pathlib import Path
 
 import docker
 
 from pydockenv import definitions
-from pydockenv.commands.pydockenv import _delete_network
-from pydockenv.commands.pydockenv import client
-from pydockenv.commands.pydockenv import containers_prefix
-from tests.commander import Commander
+from tests.base import BaseIntegrationTest
 
 
-commander = Commander.get_instance()
-
-
-class TestPydockenv(unittest.TestCase):
-
-    ENV_SUFFIX = '__test-{index}'
-
-    @classmethod
-    def setUpClass(cls):
-        cls._client = docker.from_env()
-        cls._low_level_client = docker.APIClient()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls._client.close()
-        cls._low_level_client.close()
-
-    def setUp(self):
-        self._test_dir = Path(definitions.ROOT_DIR, '.test-dir')
-        self._env_index = 1
-        os.makedirs(str(self._test_dir))
-
-    def tearDown(self):
-        try:
-            for i in range(1, self._env_index):
-                env_name = self._create_env_name(i)
-                client.containers.get(containers_prefix + env_name).remove(
-                    force=True)
-
-                _delete_network(env_name)
-        finally:
-            shutil.rmtree(self._test_dir.name)
-
-    def _env_name(self):
-        env_name = self._create_env_name(self._env_index)
-        self._env_index += 1
-        return env_name
-
-    def _create_env_name(self, index):
-        suffix = self.ENV_SUFFIX.format(index=index)
-        return f'env{suffix}'
-
-    def _create_project_dir(self, proj_name):
-        proj_dir = Path(str(self._test_dir.name), proj_name)
-        os.makedirs(str(proj_dir))
-        return proj_dir
+class TestIntegrationEnvironmentCommands(BaseIntegrationTest):
 
     def test_create(self):
         env_name = self._env_name()
         proj_name, py_version = 'test-proj', '3.7'
 
+        cont_name = definitions.CONTAINERS_PREFIX + env_name
+
         with self.assertRaises(docker.errors.NotFound):
-            self._client.containers.get(containers_prefix + env_name)
+            self._client.containers.get(cont_name)
 
         proj_dir = self._create_project_dir(proj_name)
-        out = commander.run(
-            f'create {env_name} {str(proj_dir)} --version={py_version}')
+        out = self._commander.run(
+            f'create --name={env_name} --version={py_version} {str(proj_dir)}')
+        self.assertCommandOk(out)
 
         expected = (f'Environment {env_name} with python version '
                     f'{py_version} created!')
-
-        self.assertEqual(out.returncode, 0)
         self.assertIn(expected, out.stdout.decode('utf8'))
 
-        r = self._client.containers.get(containers_prefix + env_name)
+        r = self._client.containers.get(cont_name)
         self.assertEqual(r.status, 'created')
 
-        r = self._low_level_client.inspect_container(
-            containers_prefix + env_name)
+        r = self._low_level_client.inspect_container(cont_name)
         self.assertEqual(len(r['Mounts']), 1)
 
         expected = {
@@ -94,18 +43,53 @@ class TestPydockenv(unittest.TestCase):
         actual = r['Mounts'][0]
         self.assertEqual(expected, actual)
 
-        expected = {f'{containers_prefix}{env_name}_network'}
+        expected = {f'{cont_name}_network'}
         actual = set(r['NetworkSettings']['Networks'].keys())
         self.assertEqual(expected, actual)
+
+        expected = {
+            'env_name': env_name,
+            'workdir': str(Path(self._projs_dir, proj_name)),
+            'aliases': '{}',
+        }
+        actual = r['Config']['Labels']
+        self.assertEqual(expected, actual)
+
+    def test_remove(self):
+        env_name = self._env_name()
+        proj_name, py_version = 'test-proj', '3.7'
+
+        cont_name = definitions.CONTAINERS_PREFIX + env_name
+
+        with self.assertRaises(docker.errors.NotFound):
+            self._client.containers.get(cont_name)
+
+        proj_dir = self._create_project_dir(proj_name)
+        out = self._commander.run(
+            f'create --name={env_name} --version={py_version} {str(proj_dir)}')
+        self.assertCommandOk(out)
+
+        r = self._client.containers.get(cont_name)
+        self.assertEqual(r.status, 'created')
+
+        out = self._commander.run(f'remove {env_name}')
+        self.assertCommandOk(out)
+
+        with self.assertRaises(docker.errors.NotFound):
+            self._client.containers.get(cont_name)
+
+        with self.assertRaises(docker.errors.NotFound):
+            self._client.networks.get(f'{cont_name}_network')
 
     def test_activate(self):
         env_name = self._env_name()
         proj_name, py_version = 'test-proj', '3.7'
         proj_dir = self._create_project_dir(proj_name)
 
-        commander.run(
-            f'create {env_name} {str(proj_dir)} --version={py_version}')
-        env_diff = commander.activate_env(f'{env_name}')
+        out = self._commander.run(
+            f'create --name={env_name} --version={py_version} {str(proj_dir)}')
+        self.assertCommandOk(out)
+        env_diff = self._commander.activate_env(f'{env_name}')
 
         self.assertTrue({'PYDOCKENV', 'PYDOCKENV_DEBUG', 'PS1', 'SHLVL'} <=
                         set(env_diff.keys()))
@@ -115,16 +99,17 @@ class TestPydockenv(unittest.TestCase):
         self.assertEqual(int(env_diff['SHLVL'][1]),
                          int(env_diff['SHLVL'][0] or 0) + 1)
 
-    def test_activate_and_deactivate(self):
+    def test_deactivate(self):
         env_name = self._env_name()
         proj_name, py_version = 'test-proj', '3.7'
         proj_dir = self._create_project_dir(proj_name)
 
-        commander.run(
-            f'create {env_name} {str(proj_dir)} --version={py_version}')
+        out = self._commander.run(
+            f'create --name={env_name} --version={py_version} {str(proj_dir)}')
+        self.assertCommandOk(out)
 
-        with commander.active_env(env_name) as env:
-            env_diff_post_deactivate = commander.deactivate_env(env=env)
+        with self._commander.active_env(env_name) as env:
+            env_diff_post_deactivate = self._commander.deactivate_env(env=env)
 
             self.assertEqual({'PYDOCKENV', 'PS1', 'SHLVL'},
                              env_diff_post_deactivate.keys())
@@ -134,8 +119,8 @@ class TestPydockenv(unittest.TestCase):
                              int(env_diff_post_deactivate['SHLVL'][0]) + 1)
 
     def test_list_environments(self):
-        out = commander.run('list-environments')
-        self.assertEqual(out.returncode, 0)
+        out = self._commander.run('list-environments')
+        self.assertCommandOk(out)
 
         stdout_lines = out.stdout.decode('utf8').split('\n')
         initial_envs = set([s.strip() for s in stdout_lines if s][1:-1])
@@ -160,15 +145,18 @@ class TestPydockenv(unittest.TestCase):
 
         for d in data:
             with self.assertRaises(docker.errors.NotFound):
-                self._client.containers.get(containers_prefix + d['env_name'])
+                self._client.containers.get(
+                    definitions.CONTAINERS_PREFIX + d['env_name'])
 
             proj_dir = self._create_project_dir(d['proj_name'])
-            out = commander.run(
-                f"create {d['env_name']} {str(proj_dir)} --version={d['v']}"
+            out = self._commander.run(
+                f"create --name={d['env_name']} --version={d['v']} "
+                f"{str(proj_dir)}"
             )
+            self.assertCommandOk(out)
 
-        out = commander.run('list-environments')
-        self.assertEqual(out.returncode, 0)
+        out = self._commander.run('list-environments')
+        self.assertCommandOk(out)
 
         stdout_lines = out.stdout.decode('utf8').split('\n')
         envs = set([s.strip() for s in stdout_lines if s][1:-1])
@@ -180,14 +168,17 @@ class TestPydockenv(unittest.TestCase):
         proj_name, py_version = 'test-proj', '3.7'
         proj_dir = self._create_project_dir(proj_name)
 
-        commander.run(
-            f'create {env_name} {str(proj_dir)} --version={py_version}')
+        out = self._commander.run(
+            f'create --name={env_name} --version={py_version} {str(proj_dir)}')
+        self.assertCommandOk(out)
 
-        out = commander.run('status')
+        out = self._commander.run('status')
+        self.assertCommandOk(out)
         self.assertEqual(out.stdout.decode('utf8').strip(),
                          'No active environment')
 
-        with commander.active_env(env_name) as env:
-            out = commander.run('status', env=env)
+        with self._commander.active_env(env_name) as env:
+            out = self._commander.run('status', env=env)
+            self.assertCommandOk(out)
             self.assertEqual(out.stdout.decode('utf8').strip(),
                              f'Active environment: {env_name}')
